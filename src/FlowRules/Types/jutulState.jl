@@ -26,9 +26,44 @@ display(state::jutulAllState{T}) where T = println("$(typeof(state))")
 
 
 jutulState(state::Dict) = jutulState{eltype(state[:Reservoir][:Saturations])}(state)
-jutulStates(states::Vector{S}) where {T, S<:complex_state_T(T)} = jutulStates{eltype(states[1][:Reservoir][:Saturations])}([jutulState(states[i]::state_T(T)) for i = 1:length(states)])
+function jutulStates(states::Vector{S}) where {T, S<:complex_state_T(T)}
+    error("HI")
+    jutulStates{eltype(states[1][:Reservoir][:Saturations])}([jutulState(states[i]::state_T(T)) for i = 1:length(states)])
+end
 jutulSimpleState(state::state_T(T)) where T = jutulSimpleState{eltype(state[:Saturations])}(state)
 jutulSimpleStates(states::Vector{S}) where {T, S<:complex_state_T(T)} = jutulSimpleStates{eltype(states[1][:Saturations])}([jutulSimpleState(states[i]::state_T(T)) for i = 1:length(states)])
+
+using ChainRulesCore: ChainRulesCore
+function ChainRulesCore.rrule(::Type{jutulStates}, states::Vector{S}) where {T, S<:complex_state_T(T)}
+    @info "I'm here"
+    @show typeof(states)
+    jstates = jutulStates(states)
+    jutulStates_pullback(ΔjutulStates) = NoTangent(), dict(jstates(ΔjutulStates))
+    return jstates, jutulStates_pullback
+end
+
+
+function ChainRulesCore.rrule(::Type{jutulSimpleStates}, states::Vector{S}) where {T, S<:complex_state_T(T)}
+    @info "I'm here 2"
+    @show typeof(states)
+    jstates = jutulSimpleStates(states)
+    jutulSimpleStates_pullback(ΔjutulSimpleStates) = NoTangent(), dict(jstates(ΔjutulSimpleStates))
+    return jstates, jutulSimpleStates_pullback
+end
+
+# function ChainRulesCore.rrule(::Type{jutulSimpleStates}, states::Vector{S}) where {T, S<:jutulSimpleState{T}}
+#     @info "I'm here 3"
+#     @show typeof(states)
+#     jstates = jutulSimpleStates(states)
+#     jutulSimpleStates_pullback(ΔjutulSimpleStates) = NoTangent(), dict(jstates(ΔjutulSimpleStates))
+#     return jstates, jutulSimpleStates_pullback
+# end
+
+# function ChainRulesCore.rrule(::Type{jutulStates{T}}, states::Vector{jutulState{T}}) where {T}
+#     @info "But I'm here"
+#     jutulStates_pullback(ΔjutulStates) = NoTangent(), ΔjutulStates.
+#     return jutulStates(states), jutulStates_pullback
+# end
 
 Saturations(state::jutulState) = state.state[:Reservoir][:Saturations][1,:]
 Pressure(state::jutulState) = state.state[:Reservoir][:Pressure]
@@ -200,6 +235,7 @@ end
 
 function jutulSimpleState(M::jutulModel{D, T}; ρCO2::T=T(ρCO2), ρH2O::T=T(ρH2O), g::T=T(10.0)) where {D, T}
     ## default state at time 0 with all water
+    error("deprecated. Please just do it yourself.")
     Z = repeat((1:M.n[end])*M.d[end], inner = prod(M.n[1:2]))
     p0 = ρH2O * g * (Z .+ M.h) # rho * g * h
     state0 = setup_state(simple_model(M; ρCO2=ρCO2, ρH2O=ρH2O), Pressure = p0, Saturations = [0.0, 1.0])

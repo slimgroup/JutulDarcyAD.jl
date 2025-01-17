@@ -28,7 +28,7 @@ function force(M::jutulModel{D, T}, w::jutulVWell{D, T}, tstep::Vector{T};
     return Is, controls
 end
 
-function setup_well_model(M::jutulModel{D, T}, f::Union{jutulForce{D, T}, jutulVWell{D, T}}, tstep::Vector{T};
+function setup_well_model(M::jutulModel{D, T}, f::Union{jutulForce{D, T}, jutulVWell{D, T}}, tstep::Vector{T}, state0=nothing;
     visCO2::T=T(visCO2), visH2O::T=T(visH2O), ρCO2::T=T(ρCO2), ρH2O::T=T(ρH2O), g::T=T(10.0)) where {D, T}
 
     ### set up well controls
@@ -36,46 +36,98 @@ function setup_well_model(M::jutulModel{D, T}, f::Union{jutulForce{D, T}, jutulV
 
     ### set up model, parameters
     sys = ImmiscibleSystem((VaporPhase(), AqueousPhase()), reference_densities = [ρCO2, ρH2O])
-    domain_spec = reservoir_domain(CartesianMesh(M), porosity = M.ϕ, permeability = M.K)
-    domain = discretized_domain_tpfv_flow(domain_spec)
+    mesh = CartesianMesh(M)
+    domain_spec = reservoir_domain(mesh, porosity = M.ϕ, permeability = M.K)
     model_parameters = Dict(:Reservoir => Dict(:PhaseViscosities=> [visCO2, visH2O]))
     model, parameters = setup_reservoir_model(domain_spec, sys, wells = Is, parameters=model_parameters)
     select_output_variables!(model.models.Reservoir, :all)
     ρ = ConstantCompressibilityDensities(p_ref = 150*bar, density_ref = [ρCO2, ρH2O], compressibility = [1e-4/bar, 1e-6/bar])
+    for (k, m) in pairs(model.models)
+        if k == :Reservoir || JutulDarcy.model_or_domain_is_well(m)
+            set_secondary_variables!(m; PhaseMassDensities=ρ)
+        end
+    end
     replace_variables!(model, PhaseMassDensities = ρ)
     replace_variables!(model, RelativePermeabilities = BrooksCoreyRelativePermeabilities(sys, [2.0, 2.0], [0.1, 0.1], 1.0))
     for x ∈ keys(model.models)
         Jutul.select_output_variables!(model.models[x], :all)
     end
 
-    ### forces
-    forces = setup_reservoir_forces(model, control = controls)
-
     ### initial state
-    Z = repeat((1:M.n[end])*M.d[end], inner = prod(M.n[1:2]))
-    p0 = ρH2O * g * (Z .+ M.h) # rho * g * h
-    state0 = setup_reservoir_state(model, Pressure = p0, Saturations = [0.0, 1.0])
+    if isnothing(state0)
+        Z = repeat((1:M.n[end])*M.d[end], inner = prod(M.n[1:2]))
+        p0 = ρH2O * g * (Z .+ M.h) .+ JutulDarcy.DEFAULT_MINIMUM_PRESSURE
+        state0 = setup_reservoir_state(model, Pressure = p0, Saturations = [0.0, 1.0])
+    else
+        p0 = state0[:Reservoir][:Pressure]
+    end
 
+    ### forces
+    bc = if M.pad
+        boundary = Int[]
+        for cell in 1:number_of_cells(mesh)
+            I, J, K = cell_ijk(mesh, cell)
+            if I == 1 || I == M.n[1]
+                push!(boundary, cell)
+            end
+        end
+        flow_boundary_condition(boundary, domain_spec, p0[boundary]; fractional_flow=[1.0, 0.0])
+    else
+        nothing
+    end
+
+    forces = setup_reservoir_forces(model, control = controls; bc)
     return model, parameters, state0, forces
 end
 
-function source(M::jutulModel{D, T}, f::jutulSource{D, T}; ρCO2::T=T(ρCO2)) where {D, T}
-    model = simple_model(M; ρCO2=ρCO2)
+function source(M::jutulModel{D, T}, model, f::jutulSource{D, T}, p0; ρCO2::T=T(ρCO2)) where {D, T}
     cell_loc = [Int.(round.(f.loc[i] ./ M.d)) for i = 1:length(f.loc)]
     cell = [sum([(cell_loc[i][d]-1) * prod(M.n[1:d-1]) for d = length(cell_loc[i]):-1:1]) + 1 for i = 1:length(cell_loc)]
     src  = [SourceTerm(cell[i], f.irate[i] * ρCO2, fractional_flow = [T(f.irate[i] > 0), T(1)-T(f.irate[i] > 0)]) for i = 1:length(f.loc)]
-    return setup_forces(model, sources = src)
+
+    bc = if M.pad
+        mesh = CartesianMesh(M)
+        boundary = Int[]
+        for cell in 1:number_of_cells(mesh)
+            I, J, K = cell_ijk(mesh, cell)
+            if I == 1 || I == M.n[1]
+                push!(boundary, cell)
+            end
+        end
+        flow_boundary_condition(boundary, model.data_domain, p0[boundary]; fractional_flow=[1.0, 0.0])
+    else
+        nothing
+    end
+
+    return setup_forces(model, sources = src; bc)
 end
 
 function simple_model(M::jutulModel{D, T}; ρCO2::T=T(ρCO2), ρH2O::T=T(ρH2O)) where {D, T}
-    sys = ImmiscibleSystem((VaporPhase(), AqueousPhase()))
+    sys = ImmiscibleSystem((LiquidPhase(), VaporPhase()); reference_densities=[ρH2O, ρCO2])
     g = CartesianMesh(M.n, M.d .* M.n)
     domain_spec = reservoir_domain(g, porosity = M.ϕ, permeability = M.K)
-    G = discretized_domain_tpfv_flow(domain_spec)
     model = SimulationModel(domain_spec, sys, output_level = :all)
     model.primary_variables[:Pressure] = JutulDarcy.Pressure(minimum = -Inf, max_rel = nothing)
     ρ = ConstantCompressibilityDensities(p_ref = 150*bar, density_ref = [ρCO2, ρH2O], compressibility = [1e-4/bar, 1e-6/bar])
+    set_secondary_variables!(model; PhaseMassDensities=ρ)
     replace_variables!(model, PhaseMassDensities = ρ)
     replace_variables!(model, RelativePermeabilities = BrooksCoreyRelativePermeabilities(sys, [2.0, 2.0], [0.1, 0.1], 1.0))
     return model
+end
+
+function setup_simple_model(M::jutulModel{D, T}, f::jutulSource{D, T}, tstep::Vector{T}, state0=nothing;
+    visCO2::T=T(visCO2), visH2O::T=T(visH2O), ρCO2::T=T(ρCO2), ρH2O::T=T(ρH2O), g::T=T(10.0)) where {D, T}
+    model = simple_model(M; ρCO2, ρH2O)
+
+    parameters = setup_parameters(model, PhaseViscosities = [visCO2, visH2O]);
+
+    if isnothing(state0)
+        Z = repeat((1:M.n[end])*M.d[end], inner = prod(M.n[1:2]))
+        p0 = ρH2O * g * (Z .+ M.h) .+ JutulDarcy.DEFAULT_MINIMUM_PRESSURE
+        state0 = setup_state(model, Pressure = p0, Saturations = [0.0, 1.0])
+    else
+        p0 = state0[:Pressure]
+    end
+    forces = source(M, model, f, p0; ρCO2)
+    return model, parameters, state0, forces
 end

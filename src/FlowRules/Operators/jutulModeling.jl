@@ -18,17 +18,18 @@ function (S::jutulModeling{D, T})(LogTransmissibilities::AbstractVector{T}, ϕ::
     tstep = day * S.tstep
 
     ### set up simulation configurations
-    model, parameters, state0_, forces = setup_well_model(S.model, f, tstep; visCO2=visCO2, visH2O=visH2O, ρCO2=ρCO2, ρH2O=ρH2O)
-
+    model, parameters, state0_, forces = ignore_derivatives() do
+        setup_well_model(S.model, f, tstep, state0; visCO2, visH2O, ρCO2, ρH2O)
+    end
     model.models.Reservoir.data_domain[:porosity] = ϕ
     parameters[:Reservoir][:Transmissibilities] = Transmissibilities
-    parameters[:Reservoir][:FluidVolume] .= prod(S.model.d) .* ϕ
-
+    parameters[:Reservoir][:FluidVolume] = prod(S.model.d) .* ϕ
     isnothing(state0) || (state0_[:Reservoir] = get_Reservoir_state(state0))
 
     ### simulation
-    sim, config = setup_reservoir_simulator(model, state0_, parameters);
-    states, report = simulate!(sim, tstep, forces = forces, config = config, max_timestep_cuts = 1000, info_level=info_level);
+    states, report = simulate_ad(state0_, model, tstep, parameters, forces; opt_config=nothing, max_timestep_cuts = 1000, info_level=info_level)
+    # sim, config = setup_reservoir_simulator(model, state0_, parameters);
+    # states, report = simulate!(sim, tstep, forces = forces, config = config);
     output = jutulStates(states)
     return output
 end
@@ -39,20 +40,20 @@ function (S::jutulModeling{D, T})(LogTransmissibilities::AbstractVector{T}, ϕ::
 
     Transmissibilities = exp.(LogTransmissibilities)
 
-    forces = source(S.model, f; ρCO2=ρCO2)
-
     ### set up simulation time
     tstep = day * S.tstep
-    model = simple_model(S.model; ρCO2=ρCO2, ρH2O=ρH2O)
+
+    ### set up simulation configurations
+    model, parameters, state0_, forces = ignore_derivatives() do
+        setup_simple_model(S.model, f, tstep, state0; visCO2, visH2O, ρCO2, ρH2O)
+    end
     model.data_domain[:porosity] = ϕ
-
-    parameters = setup_parameters(model, PhaseViscosities = [visCO2, visH2O]);
     parameters[:Transmissibilities] = Transmissibilities
-    parameters[:FluidVolume] .= prod(S.model.d) .* ϕ
-
-    state0_ = jutulSimpleState(S.model)
+    parameters[:FluidVolume] = prod(S.model.d) .* ϕ
     isnothing(state0) || (state0_ = state0)
-    states, _ = simulate(dict(state0_), model, tstep, parameters = parameters, forces = forces, info_level = info_level, max_timestep_cuts = 1000)
+
+    ### simulation
+    states, report = simulate_ad(state0_, model, tstep, parameters, forces; opt_config=nothing, max_timestep_cuts = 1000, info_level=info_level)
     return jutulSimpleStates(states)
 end
 
