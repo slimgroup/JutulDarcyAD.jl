@@ -1,3 +1,5 @@
+using Printf, Test
+
 mean(x) = sum(x)/length(x)
 
 function log_division(a, b)
@@ -37,15 +39,15 @@ approximation differs from the true value by approximately a constant proportion
 err(h) = |J(x₀ + h Δx) - J(x₀) - h (dJ/dx) Δx| ≈ h²c
 ```
 
-If we consider the error for two different values of h, the unknown constant can be eliminated.
+If we consider the error for two different values of h, the unknown constant can be eliminated,
+and we can determine the convergence rate.
 ```math
-err(h₁) / err(h₂) ≈ (h₁ / h₂)^2
+err(h₁) / err(h₂) ≈ (h₁ / h₂)^rate
+log(err(h₁) / err(h₂)) ≈ rate * log(h₁ / h₂)
+log(err(h₁) / err(h₂))/log(h₁ / h₂) ≈ rate
 ```
+First-order convergence has rate 1, and second order convergence has rate 2.
 So if h₁ is divided by a factor α, then the ratio of the errors should be divided by a factor α².
-Or we can compute the exponent for the rate of convergence using logarithms.
-```math
-log(err(h₁) / err(h₂)) / log (h₁ / h₂) ≈ 2
-```
 """
 function grad_test(J, x0, Δx, dJdx; ΔJ=nothing, maxiter=6, h0=5e-2, stol=1e-1, hfactor=8e-1, unittest=:test)
     if !xor(isnothing(dJdx), isnothing(ΔJ))

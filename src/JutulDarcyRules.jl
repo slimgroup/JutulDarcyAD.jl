@@ -34,5 +34,6 @@ module JutulDarcyRules
 
     include("PropertyConversion/PropertyConversion.jl")
     include("FlowRules/FlowRules.jl")
+    include("rrule_simulate.jl")
 
 end # module JutulDarcyRules
