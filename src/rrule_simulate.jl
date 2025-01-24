@@ -1,19 +1,78 @@
 using ChainRulesCore: rrule, unthunk, NoTangent, @not_implemented
-using Jutul: simulate, setup_parameter_optimization, optimization_config, vectorize_variables, SimulationModel, MultiModel, submodels, get_primary_variables
+using Jutul: Jutul, simulate, setup_parameter_optimization, optimization_config, vectorize_variables, SimulationModel, MultiModel, submodels, get_primary_variables
 using JutulDarcy
 
-function simulate_ad(state0, model, tstep, parameters, forces; opt_config=nothing, kwargs...)
+function simulate_ad(state0, model, tstep, parameters, forces;
+    opt_config_params=nothing, parameters_ref=nothing,
+    opt_config_state0=nothing, state0_ref=nothing,
+    return_extra=false,
+    kwargs...)
+    # We'll have to devectorize everything that we want the gradient. The `opt_config`
+    # defines which variables are in the vector and how to vectorize/devectorize them.
+
+    # Devectorize state0.
+    if isa(state0, AbstractVector)
+        if isnothing(opt_config_state0)
+            error("Expected opt_config_state0 to define the vectorization of state0.")
+        end
+        if isnothing(state0_ref)
+            error("Expected state0_ref to define the default state0 values.")
+        end
+        state0_t =  deepcopy(state0_ref)
+        targets = Jutul.optimization_targets(opt_config_state0, model)
+        mapper, = Jutul.variable_mapper(model, :primary; targets, config = opt_config_state0)
+        # lims = Jutul.optimization_limits(opt_config_state0, mapper, state0_t, model) # Secretly changes config in place.
+        devectorize_variables!(state0_t, model, state0, mapper, config = opt_config_state0)
+    else
+        state0_t = state0
+    end
+
+    # Devectorize parameters.
+    if isa(parameters, AbstractVector)
+        if isnothing(opt_config_params)
+            error("Expected opt_config_params to define the vectorization of params.")
+        end
+        if isnothing(parameters_ref)
+            error("Expected parameters_ref to define the default parameters values.")
+        end
+        parameters_t = deepcopy(parameters_ref)
+        # @show opt_config_params
+        targets = Jutul.optimization_targets(opt_config_params, model)
+        mapper, = Jutul.variable_mapper(model, :parameters; targets, config = opt_config_params)
+        devectorize_variables!(parameters_t, model, parameters, mapper, config = opt_config_params)
+    else
+        parameters_t = parameters
+    end
+
     # TODO: should help user by erroring if kwargs also specifies parameters and forces.
-    return simulate(state0, model, tstep; kwargs..., parameters, forces);
+    case = JutulCase(model, tstep, forces; parameters = parameters_t, state0 = state0_t)
+    output = simulate(case; kwargs...);
+    if return_extra
+        return output, case
+    end
+    return output
 end
 
 get_state_keys(model::SimulationModel, state::Dict{Any, Any}) = keys(state)
 function get_state_keys(model::MultiModel, state::Dict{Any, Any})
     state_keys = Dict{Any, Any}()
     for (k, m) in pairs(submodels(model))
-        state_keys[k] = keys(state[k])
+        if haskey(state, k)
+            state_keys[k] = keys(state[k])
+        else
+            state_keys[k] = ()
+        end
     end
     return state_keys
+end
+
+set_state_keys!(model::SimulationModel, state::Dict{Any, Any}) = nothing
+function set_state_keys!(model::MultiModel, state::Dict{Any, Any})
+    for (k, m) in pairs(submodels(model))
+        if !haskey(state, k)
+            state[k] = nothing
+        end
+    end
 end
 
 get_eltype(model::SimulationModel, state) = eltype(state.Saturations)
@@ -22,8 +81,12 @@ get_eltype(model::MultiModel, state) = get_eltype(model[:Reservoir], state.Reser
 get_eltype(model::SimulationModel, state::Dict{Any, Any}) = eltype(state[:Saturations])
 get_eltype(model::MultiModel, state::Dict{Any, Any}) = get_eltype(model[:Reservoir], state[:Reservoir])
 
-function ChainRulesCore.rrule(::typeof(simulate_ad), state0, model, tstep, parameters, forces; opt_config=nothing, kwargs...)
-    output = simulate_ad(state0, model, tstep, parameters, forces; kwargs...);
+function ChainRulesCore.rrule(::typeof(simulate_ad), state0, model, tstep, parameters, forces;
+    opt_config_params, parameters_ref=nothing,
+    kwargs...)
+    output, case = simulate_ad(state0, model, tstep, parameters, forces; opt_config_params, parameters_ref, kwargs..., return_extra=true);
+    state0_t = case.state0
+    parameters_t = case.parameters
     states, ref = output
     function simulate_ad_pullback(doutput)
         # For reverse-AD on a scalar L, we take an input dstates = dL/dy and
@@ -35,11 +98,7 @@ function ChainRulesCore.rrule(::typeof(simulate_ad), state0, model, tstep, param
         #   - Choose c = dy - M(x).
         #   - Then dF/dx = Jᵀdy as desired.
 
-        @show typeof(doutput)
         dstates = unthunk(unthunk(doutput).states)
-        @show typeof(dstates)
-        @show typeof(dstates[1])
-        @show Jutul.variable_mapper(model, :primary)
 
         # 1. First, we define F, which needs to subtract two Jutul states.
         #   This is easier to do if the states are vectorized, so we'll set
@@ -47,8 +106,10 @@ function ChainRulesCore.rrule(::typeof(simulate_ad), state0, model, tstep, param
         #   that are nonzero in dstates.
 
         targets = get_state_keys(model, first(dstates))
-        @show targets
         mapper = first(Jutul.variable_mapper(model, :primary; targets))
+        for s in dstates
+            set_state_keys!(model, s)
+        end
         function F(model, state_ad, dt, step_no, forces)
             # Vectorize everything (with the right type).
             # @show get_eltype(model, dstates[step_no])
@@ -69,43 +130,97 @@ function ChainRulesCore.rrule(::typeof(simulate_ad), state0, model, tstep, param
             c = d_state_vec - state_vec
             return sum((state_ad_vec + c) .^ 2) / 2
         end
+        sens = JutulDarcy.reservoir_sensitivities(case, output, F;
+            include_parameters = true,
+            include_state0 = false
+        )
 
-        # 2. We need an optimization config. This defines the parameters that we need
-        #    the gradient of.
-        if isnothing(opt_config)
-            opt_config = optimization_config(model, parameters, use_scaling = true, rel_min = 0.1, rel_max = 10)
-            for (ki, vi) in opt_config
-                if ki in [:TwoPointGravityDifference, :PhaseViscosities]
-                    vi[:active] = false
-                end
-                if ki == :Transmissibilities
-                    vi[:scaler] = :log
+        dparameters = Dict{Symbol, Any}()
+        if isa(model, MultiModel)
+            for (k, m) in pairs(submodels(model))
+                @info "Extracting gradient from data domain for model $k"
+                dparameters[k] = Dict{Symbol, Any}()
+                if k == :Reservoir
+                    for pk in keys(parameters_t[k])
+                        dparameters[k][pk] = sens.data[pk][1]
+                    end
+                else
+                    for pk in keys(parameters_t[k])
+                        dparameters[k][pk] = @not_implemented("I don't know how to do this.")
+                    end
                 end
             end
+        else
+            @info "Extracting gradient from data domain"
+            for pk in keys(parameters_t)
+                dparameters[pk] = sens.data[pk][1]
+            end
         end
-        opt = setup_parameter_optimization(model, state0, parameters, tstep, forces, F, opt_config, print = 100, param_obj = true, use_sparsity=true);
-
-        # We put the states here so that it doesn't need to recompute the forward problem.
-        opt.data[:states] = output.states
-        opt.data[:reports] = output.reports
-
-        # 3. We have Jutul compute the gradient.
-        dparameters = opt.dF!(similar(opt.x0), opt.x0)
-
-        # dparameters_t = deepcopy(parameters)
-        dparameters_t = Dict{Symbol, Any}(
-            k => zeros(v.n)
-            for (k, v) in pairs(opt.data[:mapper])
-        )
-        devectorize_variables!(dparameters_t, model, dparameters, opt.data[:mapper], config = opt.data[:config])
 
         dsimulate = NoTangent()
         dstate0 = NoTangent()
-        dmodel = @not_implemented("This is too difficult.")
+        dmodel = (most_of_it = @not_implemented("This is too difficult."), data_domain=sens)
         dtstep = NoTangent()
         dforces = @not_implemented("I don't know how to do this.")
 
         return dsimulate, dstate0, dmodel, dtstep, dparameters, dforces
     end
     return output, simulate_ad_pullback
+end
+
+export devectorize_variables
+
+function devectorize_variables(model, V, type_or_map = :primary; config = nothing, T = Float64)
+    mapper = Jutul.get_mapper_internal(model, type_or_map)
+    state = Dict{Symbol, Any}()
+    for (k, v) in mapper
+        if isnothing(config)
+            c = nothing
+        else
+            c = config[k]
+        end
+        F = Jutul.opt_scaler_function(config, k, inv = true)
+        (; n, offset) = v
+        state[k] = zeros(T, n)
+        Jutul.devectorize_variable!(state, V, k, v, F, config = c)
+    end
+    return state
+end
+
+
+function devectorize_variables(model::MultiModel, V, type_or_map = :primary; config = nothing)
+    mapper = Jutul.get_mapper_internal(model, type_or_map)
+    state = Dict{Symbol, Any}()
+    for (k, submodel) in pairs(model.models)
+        if isnothing(config)
+            c = nothing
+        else
+            c = config[k]
+        end
+        state[k] = devectorize_variables(submodel, V, mapper[k], config = c)
+    end
+    return state
+end
+
+function ChainRulesCore.rrule(::typeof(vectorize_variables), model, state_or_prm, type_or_map = :primary;
+    config = nothing, T = Float64)
+    v = vectorize_variables(model, state_or_prm, type_or_map; config, T)
+    function vectorize_pullback(dv)
+        dstate_or_prm = devectorize_variables(model, dv, type_or_map; config)
+        dmodel = NoTangent()
+        dtype_or_map = NoTangent()
+        return NoTangent(), dmodel, dstate_or_prm, dtype_or_map
+    end
+    return v, vectorize_pullback
+end
+
+function ChainRulesCore.rrule(::typeof(devectorize_variables), model, V, type_or_map = :primary; config = nothing)
+    state_or_prm = devectorize_variables(model, V, type_or_map; config)
+    function devectorize_pullback(dstate_or_prm)
+        dv = vectorize_variables(model, dstate_or_prm, type_or_map; config, T = eltype(V))
+        dmodel = NoTangent()
+        dtype_or_map = NoTangent()
+        return NoTangent(), dmodel, dv, dtype_or_map
+    end
+    return state_or_prm, devectorize_pullback
 end

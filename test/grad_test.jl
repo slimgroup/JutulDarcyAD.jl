@@ -105,13 +105,22 @@ function grad_test(J, x0, Δx, dJdx; ΔJ=nothing, maxiter=6, h0=5e-2, stol=1e-1,
     factor1 = err1[1:end-1]./err1[2:end]
     factor2 = err2[1:end-1]./err2[2:end]
 
-    @test mean(factor1) ≥ expected_f1 - stol
+    rate1 = log_division.(err1[2:end], err1[1:end-1]) / log_factor
+    rate2 = log_division.(err2[2:end], err2[1:end-1]) / log_factor
+
+    mean_factor1 = mean(factor1)
+    mean_factor2 = mean(factor2)
+    @printf("%11s  %12s   %11s  %11s | %11.5e, %11.5e | %12.5e, %12.5e | \n", "", "", "", "mean", mean_factor1, mean_factor2, mean(rate1), mean(rate2))
+    @printf("%11s  %12s   %11s  %11s | %11.5e, %11.5e | %12.5e, %12.5e | \n", "", "", "", "min", minimum(factor1), minimum(factor2), minimum(rate1), minimum(rate2))
+    println()
+
+    @test mean_factor1 ≥ expected_f1 - stol
     if unittest == :skip
-        @test mean(factor2) ≥ expected_f2 - stol skip=true
+        @test mean_factor2 ≥ expected_f2 - stol skip=true
     elseif unittest == :broken
-        @test mean(factor2) ≥ expected_f2 - stol broken=true
+        @test mean_factor2 ≥ expected_f2 - stol broken=true
     else
-        @test mean(factor2) ≥ expected_f2 - stol
+        @test mean_factor2 ≥ expected_f2 - stol
     end
 end
 

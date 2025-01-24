@@ -38,7 +38,8 @@ function setup_well_model(M::jutulModel{D, T}, f::Union{jutulForce{D, T}, jutulV
     sys = ImmiscibleSystem((VaporPhase(), AqueousPhase()), reference_densities = [ρCO2, ρH2O])
     mesh = CartesianMesh(M)
     domain_spec = reservoir_domain(mesh, porosity = M.ϕ, permeability = M.K)
-    model_parameters = Dict(:Reservoir => Dict(:PhaseViscosities=> [visCO2, visH2O]))
+    PhaseViscosities = [visCO2, visH2O]
+    model_parameters = Dict(:Reservoir => Dict(:PhaseViscosities=> PhaseViscosities))
     model, parameters = setup_reservoir_model(domain_spec, sys, wells = Is, parameters=model_parameters)
     select_output_variables!(model.models.Reservoir, :all)
     ρ = ConstantCompressibilityDensities(p_ref = 150*bar, density_ref = [ρCO2, ρH2O], compressibility = [1e-4/bar, 1e-6/bar])
@@ -83,7 +84,7 @@ end
 function source(M::jutulModel{D, T}, model, f::jutulSource{D, T}, p0; ρCO2::T=T(ρCO2)) where {D, T}
     cell_loc = [Int.(round.(f.loc[i] ./ M.d)) for i = 1:length(f.loc)]
     cell = [sum([(cell_loc[i][d]-1) * prod(M.n[1:d-1]) for d = length(cell_loc[i]):-1:1]) + 1 for i = 1:length(cell_loc)]
-    src  = [SourceTerm(cell[i], f.irate[i] * ρCO2, fractional_flow = [T(f.irate[i] > 0), T(1)-T(f.irate[i] > 0)]) for i = 1:length(f.loc)]
+    src  = [SourceTerm(cell[i], f.irate[i]; type = JutulDarcy.VolumeSource, fractional_flow = [T(f.irate[i] > 0), T(1)-T(f.irate[i] > 0)]) for i = 1:length(f.loc)]
 
     bc = if M.pad
         mesh = CartesianMesh(M)
@@ -98,12 +99,11 @@ function source(M::jutulModel{D, T}, model, f::jutulSource{D, T}, p0; ρCO2::T=T
     else
         nothing
     end
-
     return setup_forces(model, sources = src; bc)
 end
 
 function simple_model(M::jutulModel{D, T}; ρCO2::T=T(ρCO2), ρH2O::T=T(ρH2O)) where {D, T}
-    sys = ImmiscibleSystem((LiquidPhase(), VaporPhase()); reference_densities=[ρH2O, ρCO2])
+    sys = ImmiscibleSystem((VaporPhase(), AqueousPhase()), reference_densities = [ρCO2, ρH2O])
     g = CartesianMesh(M.n, M.d .* M.n)
     domain_spec = reservoir_domain(g, porosity = M.ϕ, permeability = M.K)
     model = SimulationModel(domain_spec, sys, output_level = :all)

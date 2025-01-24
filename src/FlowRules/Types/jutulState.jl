@@ -65,6 +65,13 @@ end
 #     return jutulStates(states), jutulStates_pullback
 # end
 
+function Saturations(state::Dict{Symbol, Any})
+    if haskey(state, :Reservoir)
+        state = state[:Reservoir]
+    end
+    return state[:Saturations][1,:]
+end
+
 Saturations(state::jutulState) = state.state[:Reservoir][:Saturations][1,:]
 Pressure(state::jutulState) = state.state[:Reservoir][:Pressure]
 Saturations(state::jutulSimpleState) = state.state[:Saturations][1,:]
