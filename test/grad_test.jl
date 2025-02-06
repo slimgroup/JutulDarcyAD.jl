@@ -1,3 +1,5 @@
+using Printf, Test
+
 mean(x) = sum(x)/length(x)
 
 function log_division(a, b)
@@ -37,15 +39,15 @@ approximation differs from the true value by approximately a constant proportion
 err(h) = |J(x₀ + h Δx) - J(x₀) - h (dJ/dx) Δx| ≈ h²c
 ```
 
-If we consider the error for two different values of h, the unknown constant can be eliminated.
+If we consider the error for two different values of h, the unknown constant can be eliminated,
+and we can determine the convergence rate.
 ```math
-err(h₁) / err(h₂) ≈ (h₁ / h₂)^2
+err(h₁) / err(h₂) ≈ (h₁ / h₂)^rate
+log(err(h₁) / err(h₂)) ≈ rate * log(h₁ / h₂)
+log(err(h₁) / err(h₂))/log(h₁ / h₂) ≈ rate
 ```
+First-order convergence has rate 1, and second order convergence has rate 2.
 So if h₁ is divided by a factor α, then the ratio of the errors should be divided by a factor α².
-Or we can compute the exponent for the rate of convergence using logarithms.
-```math
-log(err(h₁) / err(h₂)) / log (h₁ / h₂) ≈ 2
-```
 """
 function grad_test(J, x0, Δx, dJdx; ΔJ=nothing, maxiter=6, h0=5e-2, stol=1e-1, hfactor=8e-1, unittest=:test)
     if !xor(isnothing(dJdx), isnothing(ΔJ))
@@ -103,13 +105,22 @@ function grad_test(J, x0, Δx, dJdx; ΔJ=nothing, maxiter=6, h0=5e-2, stol=1e-1,
     factor1 = err1[1:end-1]./err1[2:end]
     factor2 = err2[1:end-1]./err2[2:end]
 
-    @test mean(factor1) ≥ expected_f1 - stol
+    rate1 = log_division.(err1[2:end], err1[1:end-1]) / log_factor
+    rate2 = log_division.(err2[2:end], err2[1:end-1]) / log_factor
+
+    mean_factor1 = mean(factor1)
+    mean_factor2 = mean(factor2)
+    @printf("%11s  %12s   %11s  %11s | %11.5e, %11.5e | %12.5e, %12.5e | \n", "", "", "", "mean", mean_factor1, mean_factor2, mean(rate1), mean(rate2))
+    @printf("%11s  %12s   %11s  %11s | %11.5e, %11.5e | %12.5e, %12.5e | \n", "", "", "", "min", minimum(factor1), minimum(factor2), minimum(rate1), minimum(rate2))
+    println()
+
+    @test mean_factor1 ≥ expected_f1 - stol
     if unittest == :skip
-        @test mean(factor2) ≥ expected_f2 - stol skip=true
+        @test mean_factor2 ≥ expected_f2 - stol skip=true
     elseif unittest == :broken
-        @test mean(factor2) ≥ expected_f2 - stol broken=true
+        @test mean_factor2 ≥ expected_f2 - stol broken=true
     else
-        @test mean(factor2) ≥ expected_f2 - stol
+        @test mean_factor2 ≥ expected_f2 - stol
     end
 end
 

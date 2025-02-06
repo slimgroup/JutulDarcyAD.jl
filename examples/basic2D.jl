@@ -1,11 +1,11 @@
 ## A simple 2D example for fluid-flow simulation
 
 using DrWatson
-@quickactivate "JutulDarcyRules-example"
+@quickactivate "JutulDarcyRules"
 
 using JutulDarcyRules
 using LinearAlgebra
-using PyPlot
+using PythonPlot
 
 ## grid size
 n = (30, 1, 15)
