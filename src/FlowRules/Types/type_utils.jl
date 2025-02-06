@@ -72,7 +72,7 @@ function setup_well_model(M::jutulModel{D, T}, f::Union{jutulForce{D, T}, jutulV
                 push!(boundary, cell)
             end
         end
-        flow_boundary_condition(boundary, domain_spec, p0[boundary]; fractional_flow=[1.0, 0.0])
+        flow_boundary_condition(boundary, domain_spec, p0[boundary]; fractional_flow=[0.0, 1.0])
     else
         nothing
     end
@@ -95,7 +95,7 @@ function source(M::jutulModel{D, T}, model, f::jutulSource{D, T}, p0; ρCO2::T=T
                 push!(boundary, cell)
             end
         end
-        flow_boundary_condition(boundary, model.data_domain, p0[boundary]; fractional_flow=[1.0, 0.0])
+        flow_boundary_condition(boundary, model.data_domain, p0[boundary]; fractional_flow=[0.0, 1.0])
     else
         nothing
     end

@@ -9,19 +9,10 @@ x0 = log.(KtoTrans(CartesianMesh(model0), model0.K))
 
 @testset "Test mass conservation for well modeling" begin
     states = S(x, q)
-    for k = 1:2
-        prev_exist_co2 = 0.0
-        for i = 1:length(states.states)
-            exist_co2 = sum(Saturations(states.states[i]) .* states.states[i][:Reservoir][:PhaseMassDensities][1,:] .* model.ϕ) * prod(model.d)
-            new_co2 = exist_co2 - prev_exist_co2
-            inj_co2 = JutulDarcyRules.ρCO2 * q.irate * JutulDarcyRules.day * tstep[i]
-            if k == 1
-                println(); @show i exist_co2 new_co2 inj_co2 ((new_co2 - inj_co2) ./ inj_co2)
-            else
-                @test isapprox(new_co2, inj_co2) rtol=1e-3
-            end
-            prev_exist_co2 = exist_co2
-        end
+    for i = 1:length(states.states)
+        exist_co2 = sum(Saturations(states.states[i]) .* states.states[i][:Reservoir][:PhaseMassDensities][1,:] .* model.ϕ) * prod(model.d)
+        inj_co2 = JutulDarcyRules.ρCO2 * q.irate * JutulDarcyRules.day * sum(tstep[1:i])
+        @test isapprox(exist_co2, inj_co2) rtol=1e-3
     end
 end
 
