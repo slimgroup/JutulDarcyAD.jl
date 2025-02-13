@@ -55,13 +55,18 @@ function setup_well_model(M::jutulModel{D, T}, f::Union{jutulForce{D, T}, jutulV
     end
 
     ### initial state
-    if isnothing(state0)
+    if !isnothing(state0) && haskey(state0, :Reservoir) && haskey(state0[:Reservoir], :Pressure)
+        p0 = state0[:Reservoir][:Pressure]
+    else
         Z = repeat((1:M.n[end])*M.d[end], inner = prod(M.n[1:2]))
         p0 = ρH2O * g * (Z .+ M.h) .+ JutulDarcy.DEFAULT_MINIMUM_PRESSURE
-        state0 = setup_reservoir_state(model, Pressure = p0, Saturations = [0.0, 1.0])
-    else
-        p0 = state0[:Reservoir][:Pressure]
     end
+    if !isnothing(state0) && haskey(state0, :Reservoir) && haskey(state0[:Reservoir], :Saturations)
+        S0 = state0[:Reservoir][:Saturations]
+    else
+        S0 = [0.0, 1.0]
+    end
+    state0 = setup_reservoir_state(model, Pressure = p0, Saturations = S0)
 
     ### forces
     bc = if M.pad

@@ -46,9 +46,11 @@ function simulate_ad(state0, model, tstep, parameters, forces;
 
     # TODO: should help user by erroring if kwargs also specifies parameters and forces.
     case = JutulCase(model, tstep, forces; parameters = parameters_t, state0 = state0_t)
-    output = simulate(case; kwargs...);
+    # output = simulate(case; kwargs...);
+    sim = Simulator(case)
+    output = simulate!(sim, case.dt; forces = case.forces, kwargs...)
     if return_extra
-        return output, case
+        return output, case, sim
     end
     return output
 end
@@ -84,7 +86,7 @@ get_eltype(model::MultiModel, state::Dict{Any, Any}) = get_eltype(model[:Reservo
 function ChainRulesCore.rrule(::typeof(simulate_ad), state0, model, tstep, parameters, forces;
     opt_config_params, parameters_ref=nothing,
     kwargs...)
-    output, case = simulate_ad(state0, model, tstep, parameters, forces; opt_config_params, parameters_ref, kwargs..., return_extra=true);
+    output, case, sim = simulate_ad(state0, model, tstep, parameters, forces; opt_config_params, parameters_ref, kwargs..., return_extra=true);
     state0_t = case.state0
     parameters_t = case.parameters
     states, ref = output

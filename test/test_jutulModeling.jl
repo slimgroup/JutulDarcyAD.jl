@@ -30,7 +30,7 @@ end
     pre_co2 = sum(Saturations(states.states[end]) .* states.states[end][:Reservoir][:PhaseMassDensities][1,:] .* model.ϕ) * prod(model.d)
     q2 = jutulForce(q.irate * 0.5, q.loc)
     S.tstep ./= 2
-    states_end = S(x, q2; state0=states.states[end])
+    states_end = S(x, q2; state0=Dict{Symbol, Any}(:Reservoir=>states.states[end][:Reservoir]))
     for i = 1:length(states_end.states)
         exist_co2 = sum(Saturations(states_end.states[i]) .* states_end.states[i][:Reservoir][:PhaseMassDensities][1,:] .* model.ϕ) * prod(model.d)
         inj_co2 = JutulDarcyRules.ρCO2 * q2.irate * JutulDarcyRules.day * sum(S.tstep[1:i])

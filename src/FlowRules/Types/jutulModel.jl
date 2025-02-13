@@ -10,7 +10,7 @@ struct jutulModel{D, T}
 end
 
 function jutulModel(n::NTuple{D, Int64}, d::NTuple{D, T}, ϕ::T, K::Union{Matrix{T}, T}; h::T=T(0), pad::Bool=true) where {D, T}
-    ϕ_full = ϕ * ones(T, n)
+    ϕ_full = ϕ .* ones(T, n)
     ϕ = vec(ϕ_full)
     return jutulModel(n, d, ϕ, K, h, pad)
 end
