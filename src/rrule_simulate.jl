@@ -107,34 +107,28 @@ function ChainRulesCore.rrule(::typeof(simulate_ad), state0, model, tstep, param
         #   up a vectorizer first. It should be restricted to the targets
         #   that are nonzero in dstates.
 
-        targets = get_state_keys(model, first(dstates))
-        mapper = first(Jutul.variable_mapper(model, :primary; targets))
+        targets_states = get_state_keys(model, first(dstates))
+        mapper_states = first(Jutul.variable_mapper(model, :primary; targets=targets_states))
         for s in dstates
             set_state_keys!(model, s)
         end
+
         function F(model, state_ad, dt, step_no, forces)
-            # Vectorize everything (with the right type).
-            # @show get_eltype(model, dstates[step_no])
-            # T = get_eltype(model, dstates[step_no])
-            T = Real
-            d_state_vec = vectorize_variables(model, dstates[step_no], mapper; T)
-
-            # @show get_eltype(model, states[step_no])
-            # T = get_eltype(model, states[step_no])
-            T = Real
-            state_vec = vectorize_variables(model, states[step_no], mapper; T)
-
-            # @show get_eltype(model, state_ad)
-            # T = get_eltype(model, state_ad)
-            T = Real
-            state_ad_vec = vectorize_variables(model, state_ad, mapper; T)
-
-            c = d_state_vec - state_vec
-            return sum((state_ad_vec + c) .^ 2) / 2
+            obj = 0.0
+            for (k, v) in mapper_states
+                state_ad_k = state_ad[k]
+                dstate_k = dstates[step_no][k]
+                state_k = states[step_no][k]
+                c = dstate_k .- state_k
+                @show typeof(state_ad_k) typeof(c)
+                obj += sum((state_ad_k .+ c) .^ 2)
+            end
+            return obj / 2
         end
         sens = JutulDarcy.reservoir_sensitivities(case, output, F;
             include_parameters = true,
-            include_state0 = false
+            include_state0 = false,
+            adjoint_arg=(; use_sparsity=false),
         )
 
         dparameters = Dict{Symbol, Any}()
@@ -161,9 +155,9 @@ function ChainRulesCore.rrule(::typeof(simulate_ad), state0, model, tstep, param
 
         if isa(parameters, AbstractVector)
             # Convert dparameters to a vector.
-            targets = Jutul.optimization_targets(opt_config_params, model)
-            mapper, = Jutul.variable_mapper(model, :parameters; targets, config = opt_config_params)
-            dparameters = vectorize_variables(model, dparameters, mapper)
+            targets_params = Jutul.optimization_targets(opt_config_params, model)
+            mapper_params, = Jutul.variable_mapper(model, :parameters; targets=targets_params, config = opt_config_params)
+            dparameters = vectorize_variables(model, dparameters, mapper_params)
         end
 
         dsimulate = NoTangent()
@@ -172,6 +166,7 @@ function ChainRulesCore.rrule(::typeof(simulate_ad), state0, model, tstep, param
         dtstep = NoTangent()
         dforces = @not_implemented("I don't know how to do this.")
 
+        @info "Returning gradients"
         return dsimulate, dstate0, dmodel, dtstep, dparameters, dforces
     end
     return output, simulate_ad_pullback

@@ -173,6 +173,41 @@ function full_objective(x; opt_config_params)
     return objective(output)
 end
 
+
+# Now I'll time them both.
+function jutuldarcy_version(parameters)
+    cfg = optimization_config(model, parameters)
+    for (ki, vi) in cfg
+        if ki in [:TwoPointGravityDifference, :PhaseViscosities]
+            vi[:active] = false
+        end
+        if ki == :Transmissibilities
+            vi[:scaler] = :default
+        end
+    end
+    print_obj = 0
+    opt_info = setup_parameter_optimization(model, state0, parameters, tstep, forces, mass_mismatch, cfg, print = print_obj, param_obj = true);
+    F_o, dF_o, F_and_dF, x0, lims, data = opt_info
+    F_initial = F_o(x0)
+    pullback() = dF_o(similar(x0), x0)
+    return F_initial, pullback
+end
+
+@time "      Forward JutulDarcy: " misfit_val0, pullback0 = jutuldarcy_version(parameters);
+@time "     Backward JutulDarcy: " grad0 = pullback0()
+@time "      Forward JutulDarcy: " misfit_val0, pullback0 = jutuldarcy_version(parameters);
+@time "     Backward JutulDarcy: " grad0 = pullback0()
+
+@time " Forward JutulDarcyRules: " misfit_val1, pullback1 = Flux.pullback(x -> full_objective(x; opt_config_params=cfg), x0);
+@time "Backward JutulDarcyRules: " grad1 = pullback1(1.0)
+@time " Forward JutulDarcyRules: " misfit_val1, pullback1 = Flux.pullback(x -> full_objective(x; opt_config_params=cfg), x0);
+@time "Backward JutulDarcyRules: " grad1 = pullback1(1.0)
+
+
+@test misfit_val0 ≈ misfit_val1
+@test norm(grad1[1] .- grad0) / norm(grad0) < 1e-10
+
+
 @info "Getting gradient directly."
 
 misfit_val, dparameters = Flux.withgradient(x -> full_objective(x; opt_config_params=cfg), x0)
@@ -187,6 +222,7 @@ grad_test(F_o, x0, dx, dF_initial)
 
 @info "Running gradient test on my gradient"
 grad_test(F_o, x0, dx, dparameters[1])
+
 
 # Now I'll include pressure in the objective.
 function mass_mismatch(m, state, dt, step_no, forces)
