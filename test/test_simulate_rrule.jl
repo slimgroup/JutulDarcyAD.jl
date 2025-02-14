@@ -92,13 +92,13 @@ end
 # can set log scaling to get a better conditioned optimization system, without
 # changing the limits or the result.
 
-cfg = optimization_config(model, parameters, use_scaling = true, rel_min = 0.1, rel_max = 10)
+cfg = optimization_config(model, parameters)
 for (ki, vi) in cfg
     if ki in [:TwoPointGravityDifference, :PhaseViscosities]
         vi[:active] = false
     end
     if ki == :Transmissibilities
-        vi[:scaler] = :log
+        vi[:scaler] = :default
     end
 end
 print_obj = 100
@@ -163,15 +163,9 @@ doutput = dmisfit[1]
 @info "Running second pullback."
 dstate0, dmodel, dtstep, dparameters, dforces = pullback_output(doutput)
 
-cfg[:Transmissibilities][:scaler] = :default
-targets = Jutul.optimization_targets(cfg, model)
-mapper, = Jutul.variable_mapper(model, :parameters, targets = targets, config = cfg)
-# lims = Jutul.optimization_limits(cfg, mapper, parameters, model) # Secretly changes config in place.
-dx = vectorize_variables(model, dparameters, mapper, config = cfg)
+@info "Initial objective: $misfit_val, gradient norm $(norm(dparameters))"
 
-@info "Initial objective: $misfit_val, gradient norm $(norm(dx))"
-
-@test norm(dF_initial) ≈ norm(dx)
+@test norm(dF_initial) ≈ norm(dparameters)
 
 # Now we'll use Flux's interface to directly get dparameters.
 function full_objective(x; opt_config_params)
@@ -180,12 +174,13 @@ function full_objective(x; opt_config_params)
 end
 
 @info "Getting gradient directly."
+
 misfit_val, dparameters = Flux.withgradient(x -> full_objective(x; opt_config_params=cfg), x0)
 
 @info "Initial objective: $misfit_val, gradient norm $(norm(dparameters))"
 
 # Gradient test.
-dx = 1e-1 * randn(size(x0))
+dx = x0 .* (1 .- exp.(1e-1 * randn(size(x0))))
 
 @info "Running gradient test on Jutul's gradient"
 grad_test(F_o, x0, dx, dF_initial)
@@ -219,20 +214,19 @@ misfit_val, dparameters = Flux.withgradient(x -> full_objective(x; opt_config_pa
 grad_test(F_o, x0, dx, dparameters[1])
 
 # Now I'll do it with different parameters.
-config = optimization_config(model, parameters, use_scaling = true, rel_min = 0.1, rel_max = 10)
+config = optimization_config(model, parameters)
 for (ki, vi) in config
     if ki in [:PhaseViscosities]
         vi[:active] = false
     end
     if ki == :Transmissibilities
-        vi[:scaler] = :log
+        vi[:scaler] = :default
     end
 end
 targets = Jutul.optimization_targets(config, model)
 mapper, = Jutul.variable_mapper(model, :parameters, targets = targets, config = config)
-lims = Jutul.optimization_limits(config, mapper, parameters, model) # Secretly changes config in place.
 x0 = vectorize_variables(model, parameters, mapper, config = config)
-dx = 1e-2 * randn(size(x0))
+dx = x0 .* (1 .- exp.(1e-1 * randn(size(x0))))
 
 misfit_val, dparameters = Flux.withgradient(x -> full_objective(x; opt_config_params=config), x0)
 

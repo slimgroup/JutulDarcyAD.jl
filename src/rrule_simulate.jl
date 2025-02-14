@@ -159,8 +159,15 @@ function ChainRulesCore.rrule(::typeof(simulate_ad), state0, model, tstep, param
             end
         end
 
+        if isa(parameters, AbstractVector)
+            # Convert dparameters to a vector.
+            targets = Jutul.optimization_targets(opt_config_params, model)
+            mapper, = Jutul.variable_mapper(model, :parameters; targets, config = opt_config_params)
+            dparameters = vectorize_variables(model, dparameters, mapper)
+        end
+
         dsimulate = NoTangent()
-        dstate0 = NoTangent()
+        dstate0 = @not_implemented("I don't know how to do this.")
         dmodel = (most_of_it = @not_implemented("This is too difficult."), data_domain=sens)
         dtstep = NoTangent()
         dforces = @not_implemented("I don't know how to do this.")
