@@ -1,5 +1,5 @@
 using DrWatson
-@quickactivate "JutulDarcyRules-example"
+@quickactivate "JutulDarcyRules"
 
 using JutulDarcyRules
 using Flux
