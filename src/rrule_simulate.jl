@@ -113,15 +113,30 @@ function ChainRulesCore.rrule(::typeof(simulate_ad), state0, model, tstep, param
             set_state_keys!(model, s)
         end
 
-        function F(model, state_ad, dt, step_no, forces)
+        function F(model::SimulationModel, state_ad, dt, step_no, forces)
             obj = 0.0
             for (k, v) in mapper_states
                 state_ad_k = state_ad[k]
                 dstate_k = dstates[step_no][k]
                 state_k = states[step_no][k]
                 c = dstate_k .- state_k
-                @show typeof(state_ad_k) typeof(c)
                 obj += sum((state_ad_k .+ c) .^ 2)
+            end
+            return obj / 2
+        end
+        function F(model::MultiModel, state_ad, dt, step_no, forces)
+            obj = 0.0
+            for (model, targets) in mapper_states
+                state_ad_model = state_ad[model]
+                dstate_model = dstates[step_no][model]
+                state_model = states[step_no][model]
+                for (k, v) in targets
+                    state_ad_k = state_ad_model[k]
+                    dstate_k = dstate_model[k]
+                    state_k = state_model[k]
+                    c = dstate_k .- state_k
+                    obj += sum((state_ad_k .+ c) .^ 2)
+                end
             end
             return obj / 2
         end
